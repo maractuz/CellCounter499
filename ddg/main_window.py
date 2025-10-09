@@ -26,6 +26,9 @@ from ddg import CentralWidget
 from PyQt6 import QtWidgets, QtCore, QtGui
 from ddg import AboutDialog
 from ddg import __version__
+import os
+import subprocess
+import sys
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -55,10 +58,20 @@ class MainWindow(QtWidgets.QMainWindow):
         menu.addAction(self.tr('Hungarian'), self.hu_HU)
         menu.addAction(self.tr('Spanish'), self.es_CO)
         menu.addAction(self.tr('Vietnamese'), self.vi_VN)
+        menu.addAction(self.tr('Open doc pdf'), self.openDocs)
 
         self.menuBar().addSeparator()
 
         self.menuBar().addAction(self.tr('About'), self.about_dialog.show)
+
+    def openDocs(self):
+        docpath = "doc\DotDotGoose.pdf"
+        if sys.platform.startswith('win'):
+            os.startfile(docpath)
+        elif sys.platform.startswith('darwin'):
+            subprocess.run(('open', docpath))
+        else:
+            subprocess.run(('xdg-open', docpath))
 
     def closeEvent(self, event):
         if self.centralWidget().canvas.dirty_data_check():
