@@ -62,7 +62,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.menuBar().addSeparator()
 
-        self.menuBar().addAction(self.tr('About'), self.about_dialog.show)
+        menu = self.menuBar().addMenu(self.tr('About'))
+        menu.setObjectName('About')
+        menu.addAction(self.tr('Credit'), self.about_dialog.show)
+        menu.addAction(self.tr('Docs'), self.openDocs)
 
     def openDocs(self):
         docpath = "doc\DotDotGoose.pdf"
