@@ -111,6 +111,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.pushButtonFolder.clicked.connect(self.select_folder)
         self.pushButtonZoomOut.clicked.connect(self.graphicsView.zoom_out)
         self.pushButtonZoomIn.clicked.connect(self.graphicsView.zoom_in)
+        self.automaticallyDetectButton.clicked.connect(self.detect_cells)
 
         # Fix icons since no QRC file integration
         self.pushButtonFolder.setIcon(QtGui.QIcon('icons:folder.svg'))
@@ -239,3 +240,12 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         x = self.lineEditX.text()
         y = self.lineEditY.text()
         self.canvas.save_coordinates(x, y)
+
+    def detect_cells(self):
+        msgBox = QtWidgets.QMessageBox()
+        msgBox.setWindowTitle('Warning')
+        msgBox.setText('Automatically count cells in this image?')
+        msgBox.setInformativeText('This will overwrite any points on the currently selected image.')
+        msgBox.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Cancel | QtWidgets.QMessageBox.StandardButton.Ok)
+        msgBox.setDefaultButton(QtWidgets.QMessageBox.StandardButton.Cancel)
+        response = msgBox.exec()

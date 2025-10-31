@@ -197,19 +197,19 @@ class PointWidget(QtWidgets.QWidget, WIDGET):
         self.treeView.scrollTo(self.current_model_index)
 
     def export(self):
-        if self.radioButtonCounts.isChecked():
+        if self.checkBoxCounts.isChecked():
             file_name = QtWidgets.QFileDialog.getSaveFileName(self, self.tr('Export Count Summary'), os.path.join(self.canvas.directory, 'counts.csv'), 'Text CSV (*.csv)')
             if file_name[0] != '':
                 self.canvas.export_counts(file_name[0])
-        elif self.radioButtonPoints.isChecked():
+        if self.checkBoxPoints.isChecked():
             file_name = QtWidgets.QFileDialog.getSaveFileName(self, self.tr('Export Points'), os.path.join(self.canvas.directory, 'points.csv'), 'Text CSV (*.csv)')
             if file_name[0] != '':
                 self.canvas.export_points(file_name[0])
-        elif self.radioButtonOverlay.isChecked():
+        if self.checkBoxOverlay.isChecked():
             file_name = QtWidgets.QFileDialog.getSaveFileName(self, self.tr('Export Image With Points'), os.path.join(self.canvas.directory, 'overlay.png'), 'PNG (*.png);;JPG (*.jpg)')
             if file_name[0] != '':
                 self.canvas.export_overlay(file_name[0])
-        else:
+        if self.checkBoxChips.isChecked():
             self.chip_dialog = ChipDialog(self.canvas.classes, self.canvas.points, self.canvas.directory, self.canvas.survey_id)
             self.chip_dialog.show()
 

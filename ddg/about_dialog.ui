@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>470</width>
-    <height>516</height>
+    <height>623</height>
    </rect>
   </property>
   <property name="font">
@@ -122,6 +122,13 @@
     <widget class="QGroupBox" name="groupBoxTranslators">
      <property name="title">
       <string>Translators</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="groupBoxCellCounter">
+     <property name="title">
+      <string>Cell Counter Additions</string>
      </property>
     </widget>
    </item>
