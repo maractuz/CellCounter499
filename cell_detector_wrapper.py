@@ -74,22 +74,31 @@ class CellDetectorWrapper(QtCore.QObject):
             ]
             
             self.detection_log.emit("Running inference script...")
-            result = subprocess.run(
+            
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=600
+                bufsize=1,
+                universal_newlines=True
             )
             
-            if result.stdout:
-                for line in result.stdout.split('\n'):
-                    if line.strip():
-                        self.detection_log.emit(line)
+            while True:
+                output = process.stdout.readline()
+                if output == '' and process.poll() is not None:
+                    break
+                if output:
+                    self.detection_log.emit(output.strip())
+                    QtCore.QCoreApplication.processEvents()
             
-            if result.returncode != 0:
-                error_msg = f"Inference script failed with code {result.returncode}\n"
-                if result.stderr:
-                    error_msg += f"Error: {result.stderr}"
+            stderr = process.stderr.read()
+            returncode = process.poll()
+            
+            if returncode != 0:
+                error_msg = f"Inference script failed with code {returncode}\n"
+                if stderr:
+                    error_msg += f"Error: {stderr}"
                 raise RuntimeError(error_msg)
             
             image_stem = Path(image_path).stem

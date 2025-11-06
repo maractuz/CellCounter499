@@ -244,8 +244,8 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
     def detect_cells(self):
         if self.canvas.current_image_name is None:
             QtWidgets.QMessageBox.warning(
-                self, 
-                self.tr('No Image'), 
+            self, 
+            self.tr('No Image'), 
             self.tr('Please load an image first.'),
             QtWidgets.QMessageBox.StandardButton.Ok
         )
@@ -253,11 +253,11 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
     
         if self.canvas.current_class_name is None:
             QtWidgets.QMessageBox.warning(
-                self, 
-                self.tr('No Class Selected'), 
-                self.tr('Please select a class for the detected points.'),
-                QtWidgets.QMessageBox.StandardButton.Ok
-            )
+            self, 
+            self.tr('No Class Selected'), 
+            self.tr('Please select a class for the detected points.'),
+            QtWidgets.QMessageBox.StandardButton.Ok
+        )
             return
     
         msgBox = QtWidgets.QMessageBox()
@@ -265,11 +265,11 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         msgBox.setText(self.tr('Automatically detect cells in this image?'))
         msgBox.setInformativeText(
             self.tr('This will add detected cells as points to the currently selected class. '
-                    'This may take a few minutes depending on image size.')
+                'This may take a few minutes depending on image size.')
         )
         msgBox.setStandardButtons(
-        QtWidgets.QMessageBox.StandardButton.Cancel | 
-        QtWidgets.QMessageBox.StandardButton.Ok
+            QtWidgets.QMessageBox.StandardButton.Cancel | 
+            QtWidgets.QMessageBox.StandardButton.Ok
         )
         msgBox.setDefaultButton(QtWidgets.QMessageBox.StandardButton.Ok)
         response = msgBox.exec()
@@ -281,12 +281,12 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             from cell_detector_wrapper import CellDetectorWrapper
         except ImportError:
             QtWidgets.QMessageBox.critical(
-                self,
-                self.tr('Import Error'),
-                self.tr('Could not import cell_detector_wrapper module. '
+            self,
+            self.tr('Import Error'),
+            self.tr('Could not import cell_detector_wrapper module. '
                     'Please ensure cell_detector_wrapper.py is in the same directory.'),
-                QtWidgets.QMessageBox.StandardButton.Ok
-            )
+            QtWidgets.QMessageBox.StandardButton.Ok
+        )
             return
     
         inference_script = os.path.join('ai_model', 'infer_single_overlay_improved.py')
@@ -294,15 +294,15 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
     
         if not os.path.exists(inference_script):
             QtWidgets.QMessageBox.critical(
-                self,
-                self.tr('Inference Script Not Found'),
-                self.tr('Could not find: ai_model/infer_single_overlay_improved.py\n\n'
+            self,
+            self.tr('Inference Script Not Found'),
+            self.tr('Could not find: ai_model/infer_single_overlay_improved.py\n\n'
                     'Please create an "ai_model" folder and place:\n'
                     '- infer_single_overlay_improved.py\n'
                     '- cell_classifier_best.pth\n\n'
                     'in that folder.'),
-                QtWidgets.QMessageBox.StandardButton.Ok
-            )
+            QtWidgets.QMessageBox.StandardButton.Ok
+        )
             return
     
         if not os.path.exists(model_path):
@@ -319,7 +319,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
     
         progress = QtWidgets.QProgressDialog(
         self.tr('Detecting cells...\nThis may take a few minutes.'), 
-        self.tr('Cancel'), 
+        None,
         0, 0,
         self
         )
@@ -327,6 +327,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         progress.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
         progress.setCancelButton(None)
+        progress.show()
     
         log_window = QtWidgets.QTextEdit()
         log_window.setWindowTitle(self.tr('Detection Log'))
@@ -335,55 +336,60 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         log_window.show()
     
         detector = CellDetectorWrapper(
-            inference_script_path=inference_script,
-            model_path=model_path
+        inference_script_path=inference_script,
+        model_path=model_path
         )
     
         def on_log(message):
             log_window.append(message)
-            log_window.verticalScrollBar().setValue(
-            log_window.verticalScrollBar().maximum()
-            )
+            QtCore.QCoreApplication.processEvents()
     
         def on_complete(coordinates):
+            QtWidgets.QApplication.restoreOverrideCursor()
             progress.close()
-            log_window.close()
-        
+    
             if len(coordinates) > 0:
                 for x, y in coordinates:
                     point = QtCore.QPointF(x, y)
                     self.canvas.add_point(point)
-            
-                QtWidgets.QMessageBox.information(
-                    self,
-                    self.tr('Detection Complete'),
-                    self.tr(f'Detected {len(coordinates)} cells.'),
-                    QtWidgets.QMessageBox.StandardButton.Ok
-                )
-            else:
+        
+                log_window.append("\n=== DETECTION COMPLETE ===")
+                log_window.append(f"Total cells detected: {len(coordinates)}")
+        
                 QtWidgets.QMessageBox.information(
                 self,
                 self.tr('Detection Complete'),
-                self.tr('No cells detected. Try adjusting the image or detection parameters.'),
+                self.tr(f'Detected {len(coordinates)} cells.\n\nClose the log window when ready.'),
                 QtWidgets.QMessageBox.StandardButton.Ok
-            )
+                )
+            else:
+                log_window.append("\n=== DETECTION COMPLETE ===")
+                log_window.append("No cells detected.")
+        
+                QtWidgets.QMessageBox.information(
+                    self,
+                    self.tr('Detection Complete'),
+                    self.tr('No cells detected. Try adjusting the image or detection parameters.\n\nClose the log window when ready.'),
+                    QtWidgets.QMessageBox.StandardButton.Ok
+                )
     
         def on_error(error_msg):
+            QtWidgets.QApplication.restoreOverrideCursor()
             progress.close()
-            log_window.close()
+    
+            log_window.append("\n=== ERROR ===")
+            log_window.append(error_msg)
+    
             QtWidgets.QMessageBox.critical(
-            self,
-            self.tr('Detection Error'),
-            self.tr(f'An error occurred during detection:\n\n{error_msg}'),
-            QtWidgets.QMessageBox.StandardButton.Ok
-        )
+                self,
+                self.tr('Detection Error'),
+                self.tr(f'An error occurred during detection:\n\n{error_msg}\n\nCheck the log window for details.'),
+                QtWidgets.QMessageBox.StandardButton.Ok
+            )
     
         detector.detection_log.connect(on_log)
         detector.detection_complete.connect(on_complete)
         detector.detection_error.connect(on_error)
     
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
-        try:
-            detector.detect_cells(image_path)
-        finally:
-            QtWidgets.QApplication.restoreOverrideCursor()
+        detector.detect_cells(image_path)
