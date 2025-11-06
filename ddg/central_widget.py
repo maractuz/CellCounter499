@@ -249,7 +249,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             self.tr('Please load an image first.'),
             QtWidgets.QMessageBox.StandardButton.Ok
         )
-        return
+            return
     
         if self.canvas.current_class_name is None:
             QtWidgets.QMessageBox.warning(
@@ -313,7 +313,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
                     'Please place the model file in the "ai_model" folder.'),
             QtWidgets.QMessageBox.StandardButton.Ok
         )
-        return
+            return
     
         image_path = os.path.join(self.canvas.directory, self.canvas.current_image_name)
     
