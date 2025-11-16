@@ -2,7 +2,17 @@
 # Pipeline: Gate + (strict HSV) -> dedupe -> crops -> CNN -> NMS -> snap (safe) -> NMS -> prune -> CSVs
 # Optional (OFF by default): compactness + blobness + red-edge + gate-proximity filters
 
-import argparse, os, csv
+import sys
+import os
+import pkgutil
+import argparse
+import csv
+import json
+
+print("[DIAG] INFER PYTHON:", sys.executable)
+print("[DIAG] PATH[0]:", os.environ.get("PATH", "").split(os.pathsep)[0])
+print("[DIAG] Has cv2 in this interpreter?:", pkgutil.find_loader("cv2") is not None)
+
 from pathlib import Path
 from typing import List, Tuple, Any, Optional
 
@@ -10,7 +20,6 @@ import cv2
 import numpy as np
 import torch
 import torch.nn as nn
-import json
 
 
 # -------------------- utils --------------------
@@ -312,16 +321,29 @@ def save_artifacts_csv(csv_path: str, artifact_rows: List[Tuple[str, str]]):
         for t, p in artifact_rows:
             writer.writerow([t, os.path.abspath(p)])
 
-# -------------------- for writing pnt files to be put into DDG
-# (pnt files are json files) --------------------
-def save_detections_pnt(pnt_path: str, coords_xy: np.ndarray):
+
+# -------------------- PNT writer (for DDG) --------------------
+def save_detections_pnt(pnt_path: str, image_path: str, coords_xy: np.ndarray):
+    """
+    Writes a DDG-compatible .pnt (JSON) with points keyed by the image path.
+    """
     os.makedirs(os.path.dirname(pnt_path), exist_ok=True)
-    #TODO: add shape functionality (just a default circle for the output of the model)
-    package = {'classes': ["output"], 'points': {pnt_path:{"output":[]}}, 'colors': {"output":[255,255,255]}, 'metadata': {'survey_id': "", 'coordinates': {}}, 'custom_fields': {"fields": [], "data": {}}, 'ui': {"grid": {"size": 200,"color": [255,255,255]},"point": {"radius": 25,"color": [255,255,0]}}}
-    for(i, (x, y)) in enumerate(coords_xy):
-        package['points'][pnt_path]["output"].append({'x': float(x), 'y': float(y)})
+    pkg = {
+        "classes": ["output"],
+        "points": {image_path: {"output": []}},
+        "colors": {"output": [255, 255, 0]},  # yellow
+        "metadata": {"survey_id": "", "coordinates": {}},
+        "custom_fields": {"fields": [], "data": {}},
+        "ui": {
+            "grid": {"size": 200, "color": [255, 255, 255]},
+            "point": {"radius": 6, "color": [255, 255, 0]}
+        }
+    }
+    for i, (x, y) in enumerate(coords_xy):
+        pkg["points"][image_path]["output"].append({"x": float(x), "y": float(y)})
+
     with open(pnt_path, "w") as f:
-        json.dump(package, f, indent=2)
+        json.dump(pkg, f, indent=2)
 
 
 # -------------------- main --------------------
@@ -482,7 +504,8 @@ def main():
     artifacts.append(("candidates_vis", cand_path))
 
     detections_csv_path = os.path.join(args.out_dir, f"{stem}_detections.csv")
-    artifacts_csv_path = os.path.join(args.out_dir, f"{stem}_artifacts.csv")
+    artifacts_csv_path  = os.path.join(args.out_dir, f"{stem}_artifacts.csv")
+    pnt_out             = os.path.join(args.out_dir, f"{stem}.pnt")
 
     if len(cand_xy) == 0:
         out_path = os.path.join(args.out_dir, f"{stem}_overlay.png")
@@ -492,7 +515,8 @@ def main():
         save_detections_csv(detections_csv_path, np.empty((0, 2), dtype=np.int32), np.empty((0,), dtype=np.float32))
         artifacts.append(("csv", detections_csv_path))
         save_artifacts_csv(artifacts_csv_path, artifacts)
-        print("[OK] Saved (no candidates) and CSVs.")
+        save_detections_pnt(pnt_out, args.image, np.empty((0, 2), dtype=np.float32))
+        print("[OK] Saved (no candidates) and CSVs/PNT.")
         return
 
     # Build crops
@@ -525,7 +549,8 @@ def main():
         save_detections_csv(detections_csv_path, np.empty((0, 2), dtype=np.int32), np.empty((0,), dtype=np.float32))
         artifacts.append(("csv", detections_csv_path))
         save_artifacts_csv(artifacts_csv_path, artifacts)
-        print("[OK] Saved (all candidates filtered) and CSVs.")
+        save_detections_pnt(pnt_out, args.image, np.empty((0, 2), dtype=np.float32))
+        print("[OK] Saved (all candidates filtered) and CSVs/PNT.")
         return
 
     # 2) classify crops
@@ -580,7 +605,7 @@ def main():
             min_area=args.snap_min_area, max_area=args.snap_max_area
         )
         if len(snapped_xy):
-            # discard big jumps (almost always wrong)
+            # discard big jumps
             jump = np.sqrt(((snapped_xy - pre_xy[keep_idx])**2).sum(1))
             safe = jump <= float(args.snap_jump_limit)
             snapped_xy = snapped_xy[safe]; keep_idx = keep_idx[safe]
@@ -612,18 +637,15 @@ def main():
     cv2.imwrite(out_path, overlay)
     artifacts.append(("overlay", out_path))
 
-    # 4) write CSVs
-    detections_csv_path = os.path.join(args.out_dir, f"{stem}_detections.csv")
-    artifacts_csv_path = os.path.join(args.out_dir, f"{stem}_artifacts.csv")
-    artifacts_csv_path = os.path.join(args.out_dir, f"{stem}.pnt")
+    # 4) write CSVs + PNT
     save_detections_csv(detections_csv_path, sel_xy, sel_sc)
     artifacts.append(("csv", detections_csv_path))
     save_artifacts_csv(artifacts_csv_path, artifacts)
-    save_detections_pnt(os.path.join(args.out_dir, f"{stem}.pnt"), sel_xy)
+    save_detections_pnt(pnt_out, args.image, sel_xy)
 
-    print(f"[OK] Saved overlay → {out_path}  (detections: {len(sel_xy)})")
+    print(f"[OK] Saved overlay -> {out_path}  (detections: {len(sel_xy)})")
     print(f"[OK] Wrote CSVs: {detections_csv_path}, {artifacts_csv_path}")
-    print(f"[OK] Wrote PNT: {stem}.pnt")
+    print(f"[OK] Wrote PNT: {pnt_out}")
 
 
 if __name__ == "__main__":
