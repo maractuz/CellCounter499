@@ -133,10 +133,19 @@ class PointWidget(QtWidgets.QWidget, WIDGET):
                 self.canvas.colors[self.canvas.classes[row]] = color
                 self.canvas.dirty = True
                 item = QtWidgets.QTableWidgetItem()
-                icon = QtGui.QPixmap(20, 20)
+                icon = QtGui.QPixmap(20, 20) #icon is for the visual on the table
                 icon.fill(color)
                 item.setData(QtCore.Qt.ItemDataRole.DecorationRole, icon)
                 self.tableWidgetClasses.setItem(row, 1, item)
+        if column == 2:
+            shape = self.tableWidgetClasses.item(row, column).text()
+            shapes = ['Circle', 'Square', 'Diamond']
+            shape, ok = QtWidgets.QInputDialog.getItem(self, self.tr('Select Shape'), self.tr('Shape'), shapes, shapes.index(shape), False)
+            if ok:
+                self.canvas.shapes[self.canvas.classes[row]] = shape
+                self.canvas.dirty = True
+                item = QtWidgets.QTableWidgetItem(shape)
+                self.tableWidgetClasses.setItem(row, 2, item)
 
     def change_active_point_color(self, event):
         color = QtWidgets.QColorDialog.getColor()
@@ -160,6 +169,8 @@ class PointWidget(QtWidgets.QWidget, WIDGET):
             icon.fill(self.canvas.colors[class_name])
             item.setData(QtCore.Qt.ItemDataRole.DecorationRole, icon)
             self.tableWidgetClasses.setItem(row, 1, item)
+            item = QtWidgets.QTableWidgetItem(self.canvas.shapes[class_name])
+            self.tableWidgetClasses.setItem(row, 2, item)
             row += 1
         self.tableWidgetClasses.selectionModel().clear()
 

@@ -46,6 +46,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.dirty = False
         self.points = {}
         self.colors = {}
+        self.shapes = {}
         self.coordinates = {}
         self.custom_fields = {'fields': [], 'data': {}}
         self.classes = []
@@ -72,6 +73,7 @@ class Canvas(QtWidgets.QGraphicsScene):
             self.classes.append(class_name)
             self.classes.sort()
             self.colors[class_name] = QtGui.QColor(QtCore.Qt.GlobalColor.black)
+            self.shapes[class_name] = "Circle"
             self.dirty = True
 
     def add_custom_field(self, field_def):
@@ -89,7 +91,22 @@ class Canvas(QtWidgets.QGraphicsScene):
             active_brush = QtGui.QBrush(active_color, QtCore.Qt.BrushStyle.SolidPattern)
             active_pen = QtGui.QPen(active_brush, 2)
             self.points[self.current_image_name][self.current_class_name].append(point)
-            self.addEllipse(QtCore.QRectF(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius), active_pen, active_brush)
+            shape = None
+            match self.shapes[self.current_class_name]:
+                case 'Circle':
+                    shape = QtWidgets.QGraphicsEllipseItem(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius)
+                case 'Square':
+                    shape = QtWidgets.QGraphicsRectItem(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius)
+                case 'Diamond': 
+                    shape = QtWidgets.QGraphicsRectItem(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius)
+                    shape.setTransformOriginPoint(point.x(), point.y())
+                    shape.setRotation(45)      
+                case _:
+                    shape = QtWidgets.QGraphicsEllipseItem(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius)
+            
+            shape.setBrush(active_brush)
+            shape.setPen(active_pen)
+            self.addItem(shape)
             self.update_point_count.emit(self.current_image_name, self.current_class_name, len(self.points[self.current_image_name][self.current_class_name]))
             self.dirty = True
             self.undo_queue.append(('add', self.current_class_name, point))
@@ -101,7 +118,7 @@ class Canvas(QtWidgets.QGraphicsScene):
 
     def clear_points(self):
         for graphic in self.items():
-            if isinstance(graphic, QtWidgets.QGraphicsEllipseItem):
+            if isinstance(graphic, QtWidgets.QGraphicsItem) and not isinstance(graphic, QtWidgets.QGraphicsPixmapItem):
                 self.removeItem(graphic)
 
     def clear_queues(self):
@@ -199,10 +216,27 @@ class Canvas(QtWidgets.QGraphicsScene):
                 brush = QtGui.QBrush(self.colors[class_name], QtCore.Qt.BrushStyle.SolidPattern)
                 pen = QtGui.QPen(brush, 2)
                 for point in points:
+                    #generate shape before adding to scene with respective pen and brush
+                    shape = None
+                    match self.shapes[class_name]:
+                        case 'Circle':
+                            shape = QtWidgets.QGraphicsEllipseItem(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius)
+                        case 'Square':
+                            shape = QtWidgets.QGraphicsRectItem(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius)
+                        case 'Diamond': 
+                            shape = QtWidgets.QGraphicsRectItem(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius)
+                            shape.setTransformOriginPoint(point.x(), point.y())
+                            shape.setRotation(45)      
+                        case _:
+                            shape = QtWidgets.QGraphicsEllipseItem(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius)
                     if class_name == self.current_class_name:
-                        self.addEllipse(QtCore.QRectF(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius), active_pen, active_brush)
+                        shape.setBrush(active_brush)
+                        shape.setPen(active_pen)
+                        self.addItem(shape)
                     else:
-                        self.addEllipse(QtCore.QRectF(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius), pen, brush)
+                        shape.setBrush(brush)
+                        shape.setPen(pen)
+                        self.addItem(shape)
 
     def export_counts(self, file_name):
         if self.current_image_name is not None:
@@ -302,6 +336,13 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.colors = data['colors']
         for class_name in data['colors']:
             self.colors[class_name] = QtGui.QColor(self.colors[class_name][0], self.colors[class_name][1], self.colors[class_name][2])
+        #shapes, also allows for importing of old non-shape files. circles by default
+        if 'shapes' in data:
+            for class_name in data['shapes']:
+                self.shapes[class_name] = data['shapes'][class_name]
+        else:
+            for class_name in data['shapes']:
+                self.shapes[class_name] = "Circle"
         self.classes = data['classes']
         self.fields_updated.emit(self.custom_fields['fields'])
         self.points_loaded.emit('')
@@ -455,6 +496,11 @@ class Canvas(QtWidgets.QGraphicsScene):
         # End Backward compat
 
         self.colors = data['colors']
+        if 'shapes' in data:
+            self.shapes = data['shapes']
+        else:
+            for class_name in data['colors']:
+                self.shapes[class_name] = "Circle"
         self.classes = data['classes']
         self.coordinates = data['metadata']['coordinates']
         self.points = {}
@@ -475,13 +521,15 @@ class Canvas(QtWidgets.QGraphicsScene):
 
     def package_points(self):
         count = 0
-        package = {'classes': [], 'points': {}, 'colors': {}, 'metadata': {'survey_id': self.survey_id, 'coordinates': self.coordinates}, 'custom_fields': self.custom_fields, 'ui': self.ui}
+        package = {'classes': [], 'points': {}, 'colors': {}, 'shapes': {}, 'metadata': {'survey_id': self.survey_id, 'coordinates': self.coordinates}, 'custom_fields': self.custom_fields, 'ui': self.ui}
         package['classes'] = self.classes
         for class_name in self.colors:
             r = self.colors[class_name].red()
             g = self.colors[class_name].green()
             b = self.colors[class_name].blue()
             package['colors'][class_name] = [r, g, b]
+        for class_name in self.shapes:
+            package['shapes'][class_name] = self.shapes[class_name]
         for image in self.points:
             package['points'][image] = {}
             for class_name in self.points[image]:
@@ -565,6 +613,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.dirty = False
         self.points = {}
         self.colors = {}
+        self.shapes = {}
         self.classes = []
         self.classes = []
         self.selection = []
@@ -586,6 +635,7 @@ class Canvas(QtWidgets.QGraphicsScene):
     def remove_class(self, class_name):
         index = self.classes.index(class_name)
         del self.colors[class_name]
+        del self.shapes[class_name]
         del self.classes[index]
         for image in self.points:
             if class_name in self.points[image]:
@@ -668,6 +718,10 @@ class Canvas(QtWidgets.QGraphicsScene):
 
     def set_point_color(self, color):
         self.ui['point']['color'] = [color.red(), color.green(), color.blue()]
+        self.display_points()
+
+    def set_point_shape(self, shape):
+        self.ui['point']['shape'] = shape
         self.display_points()
 
     def set_point_radius(self, radius):
