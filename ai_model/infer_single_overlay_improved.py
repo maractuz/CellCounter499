@@ -1,6 +1,43 @@
-# Microscopy candidate union + gated detection (224, no-norm by default)
-# Pipeline: Gate + (strict HSV) -> dedupe -> crops -> CNN -> NMS -> snap (safe) -> NMS -> prune -> CSVs
-# Optional (OFF by default): compactness + blobness + red-edge + gate-proximity filters
+"""
+Microscopy candidate union + gated detection (224, no-norm by default)
+
+This script runs the full CellCounter/DDG biomarker-detection pipeline on a single
+microscopy image and writes:
+
+- A PNG overlay with detections drawn as circles
+- A CSV of detections (x, y, score)
+- A CSV of artifact/debug paths
+- A DDG-compatible .pnt file with point annotations for DotDotGoose
+
+High-level pipeline
+-------------------
+1. **Load image**
+2. **Optional edge/green/yellow gate** (structural + color gate)
+3. **Strict HSV yellow candidates**
+4. **Candidate union + small-radius NMS** (dedupe)
+5. **Center crops around candidates**
+6. **Optional pre-CNN FP filters** (compactness, blobness, red-edge, gate proximity)
+7. **CNN scoring** (ResNet-18, 224x224 crops, 1 output logit per crop)
+8. **Score thresholding**
+9. **Radius-based NMS** (pre-snap)
+10. **Optional snapping to yellow centroids** (HSV-based refinement with jump safety)
+11. **Radius-based NMS** (post-snap)
+12. **Tight-pair pruning** (remove very close duplicates)
+13. **Write overlay + CSVs + PNT**
+
+Usage
+-----
+python infer_single_overlay_improved.py \
+    --image /path/to/image.png \
+    --weights /path/to/resnet18_weights.pt \
+    --out_dir experiments/quickcheck \
+    [other optional flags...]
+
+By default:
+- Model expects 224x224 crops
+- No normalization (unless --normalize is set)
+- Color order is BGR->RGB before feeding the model (color_order="rgb")
+"""
 
 import sys
 import os
@@ -24,6 +61,18 @@ import torch.nn as nn
 
 # -------------------- utils --------------------
 def load_image_bgr(path: str) -> np.ndarray:
+    """
+    Load an image from disk in BGR color order.
+
+    Args:
+        path: Path to the input image.
+
+    Returns:
+        np.ndarray: Image array (H, W, 3) in BGR uint8 format.
+
+    Raises:
+        FileNotFoundError: If OpenCV cannot read the image from the path.
+        """
     img = cv2.imread(path, cv2.IMREAD_COLOR)
     if img is None:
         raise FileNotFoundError(f"Could not read image: {path}")
@@ -32,6 +81,28 @@ def load_image_bgr(path: str) -> np.ndarray:
 
 def to_tensor_bchw_uint8(crops: List[np.ndarray], color_order: str, normalize: bool,
                          mean_str: str, std_str: str, device: torch.device) -> torch.Tensor:
+    """
+    Convert a list of BGR crops to a float32 tensor (N, C, H, W) for PyTorch.
+
+    Pipeline:
+      - Stack crops into a single array (N, H, W, C)
+      - Optionally convert BGR -> RGB
+      - Scale to [0, 1]
+      - Optional channel-wise normalization
+      - Transpose to (N, C, H, W)
+      - Move to the requested device
+
+    Args:
+        crops: List of image crops in BGR uint8 format with equal size.
+        color_order: Either "rgb" or "bgr". If "rgb", crops are converted BGR->RGB.
+        normalize: Whether to apply per-channel normalization.
+        mean_str: Comma-separated means per channel (e.g. "0.485,0.456,0.406").
+        std_str: Comma-separated std per channel (e.g. "0.229,0.224,0.225").
+        device: PyTorch device to move the tensor to.
+
+    Returns:
+        torch.Tensor: Float32 tensor of shape (N, C, H, W) on the specified device.
+        """
     arr = np.stack(crops, axis=0)  # N,H,W,C (BGR)
     if color_order.lower() == "rgb":
         arr = arr[:, :, :, ::-1]   # BGR->RGB
@@ -45,6 +116,18 @@ def to_tensor_bchw_uint8(crops: List[np.ndarray], color_order: str, normalize: b
 
 
 def strip_prefix_if_present(state_dict, prefix: str):
+    """
+    Strip a prefix from all keys in a state_dict if all keys start with that prefix.
+
+    Useful when loading checkpoints saved with DataParallel or wrappers like "module.".
+
+    Args:
+        state_dict: A mapping of parameter names to tensors.
+        prefix: Prefix string to strip (e.g. "module.").
+
+    Returns:
+        dict: Potentially modified state_dict with prefix removed.
+        """
     keys = list(state_dict.keys())
     if keys and all(k.startswith(prefix) for k in keys):
         return {k[len(prefix):]: v for k, v in state_dict.items()}
@@ -52,6 +135,15 @@ def strip_prefix_if_present(state_dict, prefix: str):
 
 
 def build_resnet18(num_classes: int) -> nn.Module:
+    """
+    Construct a vanilla torchvision ResNet-18 for classification.
+
+    Args:
+        num_classes: Number of output classes (here typically 1 for sigmoid).
+
+    Returns:
+        nn.Module: ResNet-18 model with final fc layer replaced for num_classes.
+        """
     import torchvision.models as tvm
     m = tvm.resnet18(weights=None)
     m.fc = nn.Linear(m.fc.in_features, num_classes)
@@ -59,6 +151,19 @@ def build_resnet18(num_classes: int) -> nn.Module:
 
 
 def extract_state_dict(ckpt: Any, checkpoint_key: Optional[str]):
+    """
+    Extract a tensor-only state_dict from a flexible checkpoint structure.
+
+    Handles checkpoints that may contain nested keys like "state_dict",
+    "model_state", "model", "net", or "weights".
+
+    Args:
+        ckpt: Loaded checkpoint object (typically from torch.load).
+        checkpoint_key: Optional explicit key to look for inside ckpt.
+
+    Returns:
+        dict: A mapping from parameter names to tensors, or {} if nothing found.
+        """
     if isinstance(ckpt, dict):
         if checkpoint_key and checkpoint_key in ckpt and isinstance(ckpt[checkpoint_key], dict):
             return ckpt[checkpoint_key]
@@ -74,6 +179,23 @@ def extract_state_dict(ckpt: Any, checkpoint_key: Optional[str]):
 
 
 def load_model(weights_path: str, device: torch.device, num_classes: int) -> nn.Module:
+    """
+    Load a ResNet-18 model with a binary head from a checkpoint.
+
+    This:
+      - torch.load's the checkpoint
+      - Extracts a state_dict from common patterns
+      - Strips known prefixes (module., model., net.) if present
+      - Loads weights into a fresh ResNet-18(num_classes)
+
+    Args:
+        weights_path: Path to the .pt or .pth weights file.
+        device: Torch device ("cpu" or "cuda").
+        num_classes: Number of classes for the ResNet head.
+
+    Returns:
+        nn.Module: Loaded ResNet-18 model in eval() mode.
+        """
     ckpt = torch.load(weights_path, map_location=device)
     state = extract_state_dict(ckpt, None)
     model = build_resnet18(num_classes=num_classes).to(device)
@@ -91,6 +213,30 @@ def find_yellow_candidates(img_bgr: np.ndarray,
                            h_lo=15, h_hi=40,
                            s_lo=80, v_lo=80,
                            min_area=5, max_area=500) -> Tuple[List[Tuple[int, int]], np.ndarray]:
+    """
+    Find yellow-ish connected components in HSV space as candidate centroids.
+
+    Steps:
+      - Convert BGR -> HSV
+      - Threshold using provided (H, S, V) bounds
+      - Morphological cleanup (median blur, open/close)
+      - Extract contours and compute centroids
+      - Filter by contour area
+
+    Args:
+        img_bgr: Input image in BGR uint8 format.
+        h_lo: Lower hue bound.
+        h_hi: Upper hue bound.
+        s_lo: Lower saturation bound.
+        v_lo: Lower value/brightness bound.
+        min_area: Minimum contour area to keep.
+        max_area: Maximum contour area to keep.
+
+    Returns:
+        Tuple[List[Tuple[int, int]], np.ndarray]:
+            - List of (x, y) centroids of candidate components.
+            - Final binary mask (uint8) used to find the components.
+        """
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     lower = np.array([h_lo, s_lo, v_lo], dtype=np.uint8)
     upper = np.array([h_hi, 255, 255], dtype=np.uint8)
@@ -120,6 +266,16 @@ def find_yellow_candidates(img_bgr: np.ndarray,
 
 # -------------------- Edge + Green + Yellow gate --------------------
 def _float_rgb(img_bgr: np.ndarray):
+    """
+    Convert a BGR uint8 image to float RGB channels in [0, 1].
+
+    Args:
+        img_bgr: Input BGR image (H, W, 3) uint8.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray, np.ndarray]:
+            R, G, B float32 arrays each in [0, 1].
+        """
     img = img_bgr.astype(np.float32) / 255.0
     B, G, R = img[..., 0], img[..., 1], img[..., 2]
     return R, G, B
@@ -134,6 +290,40 @@ def build_edge_green_yellow_gate(
     keep_border=False, border_px=8,
     debug=False, debug_prefix="debug"
 ):
+    """
+    Build a binary gate mask based on red edges, green positivity, and yellow co-mix.
+
+    Logic (per our prior experiments):
+      1. Use Canny edges on blurred red channel, dilate to get a "red edge band".
+      2. Compute an adaptive green threshold (mean + k * std) and keep green-positive pixels.
+      3. Enforce "yellow-ish" pixels where R and G are both high, B is low, and R~G.
+      4. Combine: gate = edge_band & green_mask & yellow.
+      5. Optionally remove border pixels (to avoid frame artifacts).
+      6. Clean using morph operations and connected component area filtering.
+
+    Args:
+        img_bgr: Input BGR image, uint8.
+        edge_band_px: Radius for dilating edges into a band.
+        canny_lo: Lower Canny threshold on red.
+        canny_hi: Upper Canny threshold on red.
+        green_k: Multiplier for green_std when computing green threshold.
+        tR: Min R value (0..1) for yellow.
+        tG: Min G value (0..1) for yellow.
+        tB: Max B value (0..1) for yellow.
+        delta_rg: Max |R - G| allowed (co-mix closeness).
+        rg_ratio: Min min(R,G)/max(R,G) allowed.
+        min_cc_area: Minimum connected component area to keep.
+        max_cc_area: Maximum connected component area to keep.
+        keep_border: If False, suppress a border_px-wide frame around the image.
+        border_px: Border width in pixels.
+        debug: If True, write intermediate masks to disk.
+        debug_prefix: Path prefix for debug mask outputs.
+
+    Returns:
+        Tuple[np.ndarray, dict]:
+            - gate_mask: Final boolean mask of candidate locations.
+            - debug_dict: Dict with raw masks: {"edge_band", "green", "yellow"}.
+        """
     H, W = img_bgr.shape[:2]
     R, G, B = _float_rgb(img_bgr)
 
@@ -190,6 +380,18 @@ def build_edge_green_yellow_gate(
 
 # crop around a point with reflect padding to fixed size
 def center_crop(img: np.ndarray, x: int, y: int, size: int) -> np.ndarray:
+    """
+    Extract a fixed-size crop centered at (x, y), using reflect padding if needed.
+
+    Args:
+        img: Input image (H, W, C).
+        x: X coordinate of crop center.
+        y: Y coordinate of crop center.
+        size: Desired crop size (size x size).
+
+    Returns:
+        np.ndarray: Cropped image (size, size, C) in same dtype as input.
+        """
     h, w = img.shape[:2]
     r = size // 2
     x0, y0 = max(0, x - r), max(0, y - r)
@@ -210,6 +412,31 @@ def snap_to_yellow_centroids(img_bgr,
                              search_r=8,
                              h_lo=18, h_hi=42, s_lo=150, v_lo=170,
                              min_area=8, max_area=220) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Optionally refine candidate positions by snapping them to nearby yellow centroids.
+
+    For each candidate point:
+      - Look in a (2*search_r+1) window around the point in a strict HSV yellow mask.
+      - Run connectedComponentsWithStats to find blobs.
+      - Choose the centroid that is closest to the original candidate.
+      - Keep only blobs whose area is within [min_area, max_area].
+
+    Args:
+        img_bgr: Input BGR image.
+        pts_xy: Array of candidate points (N, 2) in (x, y) order.
+        search_r: Search radius (in pixels) around each candidate.
+        h_lo: Lower hue for yellow region.
+        h_hi: Upper hue for yellow region.
+        s_lo: Lower saturation bound.
+        v_lo: Lower value/brightness bound.
+        min_area: Minimum blob area to consider.
+        max_area: Maximum blob area to consider.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]:
+            - snapped_xy: (M, 2) array of refined coordinates.
+            - keep_idx: (M,) array of indices into the original pts_xy that were snapped.
+        """
     if len(pts_xy) == 0:
         return np.empty((0, 2), dtype=np.float32), np.empty((0,), dtype=np.int32)
 
@@ -249,6 +476,24 @@ def snap_to_yellow_centroids(img_bgr,
 
 # -------------------- FP filters (OFF by default) --------------------
 def dot_compactness_ok(crop_bgr, min_ratio=0.003, max_ratio=0.030, blur_sigma=1.0):
+    """
+    Filter based on the fraction of foreground pixels in a binarized crop.
+
+    Heuristically:
+      - Convert to grayscale, optionally Gaussian-blur.
+      - Otsu-threshold to get a binary mask.
+      - Compute ratio of foreground pixels.
+      - Keep if ratio is in [min_ratio, max_ratio].
+
+    Args:
+        crop_bgr: Crop image in BGR.
+        min_ratio: Minimum foreground pixel fraction.
+        max_ratio: Maximum foreground pixel fraction.
+        blur_sigma: Gaussian sigma for smoothing before threshold.
+
+    Returns:
+        bool: True if the compactness ratio lies within the specified bounds.
+        """
     gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
     if blur_sigma > 0:
         gray = cv2.GaussianBlur(gray, (0,0), blur_sigma)
@@ -258,6 +503,24 @@ def dot_compactness_ok(crop_bgr, min_ratio=0.003, max_ratio=0.030, blur_sigma=1.
 
 
 def log_blobness_score(crop_bgr, sigma=1.2):
+    """
+    Compute a simple Laplacian-based "blobness" score for a crop.
+
+    Rough idea:
+      - Blur grayscale crop.
+      - Apply Laplacian.
+      - Measure positive and negative responses.
+      - Score = mean(pos) - 0.6 * mean(neg)
+
+    Higher scores indicate blob-like bright center structures.
+
+    Args:
+        crop_bgr: Crop image in BGR.
+        sigma: Gaussian blur sigma.
+
+    Returns:
+        float: Blobness score (higher is more blob-like).
+        """
     gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)/255.0
     g = cv2.GaussianBlur(gray, (0,0), sigma)
     lap = cv2.Laplacian(g, cv2.CV_32F, ksize=3)
@@ -267,6 +530,18 @@ def log_blobness_score(crop_bgr, sigma=1.2):
 
 
 def red_edge_ok(crop_bgr, canny_lo=10, canny_hi=40, min_edge_pct=0.010):
+    """
+    Filter based on red-channel edge content.
+
+    Args:
+        crop_bgr: Crop image in BGR.
+        canny_lo: Lower Canny threshold.
+        canny_hi: Upper Canny threshold.
+        min_edge_pct: Minimum fraction of edge pixels required.
+
+    Returns:
+        bool: True if the fraction of red-channel edges exceeds min_edge_pct.
+        """
     R = crop_bgr[..., 2]
     rb = cv2.GaussianBlur(R, (0,0), 1.0)
     e = cv2.Canny(rb, canny_lo, canny_hi)
@@ -274,6 +549,17 @@ def red_edge_ok(crop_bgr, canny_lo=10, canny_hi=40, min_edge_pct=0.010):
 
 
 def require_gate_proximity(points: np.ndarray, gate_mask: np.ndarray, radius: int = 4) -> np.ndarray:
+    """
+    Keep only candidate points that lie within a dilated gate mask.
+
+    Args:
+        points: (N, 2) array of (x, y) points.
+        gate_mask: Boolean or uint8 gate mask (H, W).
+        radius: Structuring element radius for dilating the gate.
+
+    Returns:
+        np.ndarray: Indices of points that fall within the dilated gate.
+        """
     if gate_mask is None or len(points) == 0:
         return np.arange(len(points), dtype=np.int32)
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*radius+1, 2*radius+1))
@@ -286,6 +572,23 @@ def require_gate_proximity(points: np.ndarray, gate_mask: np.ndarray, radius: in
 
 
 def prune_tight_pairs(points: np.ndarray, scores: np.ndarray, floor=8):
+    """
+    Greedy pruning of detections that are too close to each other.
+
+    Algorithm:
+      - Sort points by descending score.
+      - Iterate; for each kept point, suppress any other point within floor pixels.
+
+    Args:
+        points: (N, 2) array of (x, y) positions.
+        scores: (N,) array of scores.
+        floor: Distance threshold in pixels (Euclidean).
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]:
+            - pruned_points: Remaining points.
+            - pruned_scores: Corresponding scores.
+        """
     if len(points) == 0:
         return points, scores
     keep = []
@@ -304,6 +607,14 @@ def prune_tight_pairs(points: np.ndarray, scores: np.ndarray, floor=8):
 
 # -------------------- CSV helpers --------------------
 def save_detections_csv(csv_path: str, coords_xy: np.ndarray, scores: np.ndarray):
+    """
+    Save detections to CSV with columns [x, y, score].
+
+    Args:
+        csv_path: Output CSV path.
+        coords_xy: (N, 2) array of detections.
+        scores: (N,) array of detection scores.
+        """
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -314,6 +625,16 @@ def save_detections_csv(csv_path: str, coords_xy: np.ndarray, scores: np.ndarray
 
 
 def save_artifacts_csv(csv_path: str, artifact_rows: List[Tuple[str, str]]):
+    """
+    Save artifact paths (debug masks, overlay, csv, etc.) to CSV.
+
+    Each row:
+        artifact_type, path
+
+    Args:
+        csv_path: Output CSV path.
+        artifact_rows: List of (artifact_type, path) pairs.
+        """
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -325,8 +646,13 @@ def save_artifacts_csv(csv_path: str, artifact_rows: List[Tuple[str, str]]):
 # -------------------- PNT writer (for DDG) --------------------
 def save_detections_pnt(pnt_path: str, image_path: str, coords_xy: np.ndarray):
     """
-    Writes a DDG-compatible .pnt (JSON) with points keyed by the image path.
-    """
+    Write a DotDotGoose-compatible .pnt (JSON) with detections.
+
+    Args:
+        pnt_path: Path to .pnt file to write.
+        image_path: Original image path used as key in the .pnt file.
+        coords_xy: (N, 2) array of detection coordinates.
+        """
     os.makedirs(os.path.dirname(pnt_path), exist_ok=True)
     pkg = {
         "classes": ["output"],
@@ -348,6 +674,23 @@ def save_detections_pnt(pnt_path: str, image_path: str, coords_xy: np.ndarray):
 
 # -------------------- main --------------------
 def main():
+    """
+    Entry point for running the microscopy candidate union + gated detection pipeline.
+
+    Parses CLI arguments, runs:
+      - Image loading
+      - Optional gate construction
+      - HSV candidate extraction
+      - Candidate union + dedupe
+      - Crop extraction
+      - Optional pre-CNN FP filters
+      - CNN scoring + thresholding + NMS
+      - Optional snap-to-yellow refinement + jump safety
+      - Post-snap NMS + tight-pair pruning
+      - Overlay drawing + CSV + PNT writing
+
+    Outputs are written into --out_dir.
+        """
     ap = argparse.ArgumentParser("Microscopy candidate union + gated detection (224, no-norm by default)")
     ap.add_argument("--image", required=True)
     ap.add_argument("--weights", required=True)
@@ -470,6 +813,17 @@ def main():
 
         # small union NMS to dedupe nearby points
         def nms_radius(points: np.ndarray, scores: np.ndarray, radius: int) -> List[int]:
+            """
+           Radius-based non-max suppression (NMS) for candidate union.
+
+           Args:
+               points: (N, 2) array of points.
+               scores: (N,) array of scores.
+               radius: Suppression radius in pixels.
+
+           Returns:
+               List[int]: Indices of kept points.
+                        """
             if len(points) == 0:
                 return []
             order = np.argsort(-scores)

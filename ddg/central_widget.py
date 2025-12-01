@@ -332,40 +332,17 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             from cell_detector_wrapper import CellDetectorWrapper
         except ImportError:
             QtWidgets.QMessageBox.critical(
-            self,
-            self.tr('Import Error'),
-            self.tr('Cannot find cell_detector_wrapper.py'),
-            QtWidgets.QMessageBox.StandardButton.Ok
-            )
-            return None
-    
-        inference_script = os.path.join('ai_model', 'infer_single_overlay_improved.py')
-        model_path = os.path.join('ai_model', 'cell_classifier_best.pth')
-    
-        if not os.path.exists(inference_script):
-            QtWidgets.QMessageBox.critical(
                 self,
-                self.tr('Missing File'),
-                self.tr('Cannot find ai_model/infer_single_overlay_improved.py\n\n'
-                    'Put these in an ai_model folder:\n'
-                    '- infer_single_overlay_improved.py\n'
-                    '- cell_classifier_best.pth'),
-            QtWidgets.QMessageBox.StandardButton.Ok
+                self.tr('Import Error'),
+                self.tr('Cannot find cell_detector_wrapper.py'),
+                QtWidgets.QMessageBox.StandardButton.Ok
             )
             return None
-    
-        if not os.path.exists(model_path):
-            QtWidgets.QMessageBox.critical(
-            self,
-            self.tr('Missing Model'),
-            self.tr('Cannot find ai_model/cell_classifier_best.pth'),
-            QtWidgets.QMessageBox.StandardButton.Ok
-            )
-            return None
-    
+
+        # Let CellDetectorWrapper handle path resolution - pass None to use defaults
         return CellDetectorWrapper(
-            inference_script_path=inference_script,
-            model_path=model_path
+            inference_script_path=None,
+            model_path=None
         )
 
     def _run_detection_batch(self, detector, images_to_process):
