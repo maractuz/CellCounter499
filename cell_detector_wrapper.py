@@ -43,7 +43,6 @@ class CellDetectorWrapper(QtCore.QObject):
         if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
             print(f"[DEBUG] _MEIPASS: {sys._MEIPASS}")
             print(f"[DEBUG] Contents of _MEIPASS:")
-            import os
             for root, dirs, files in os.walk(sys._MEIPASS):
                 level = root.replace(sys._MEIPASS, '').count(os.sep)
                 indent = ' ' * 2 * level
