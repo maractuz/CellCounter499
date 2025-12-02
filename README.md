@@ -90,7 +90,7 @@ venv\Scripts\activate #if using environment
 cd package
 pip install -r requirements.txt
 pip install pyinstaller
-pyinstaller --clean --noconfirm ddg.spec #OR 'ddg_mac.spec' for MacOS
+python pyinstaller --clean --noconfirm ddg.spec #OR 'ddg_mac.spec' for MacOS
 ```
 
 ## Executable Directory: 
