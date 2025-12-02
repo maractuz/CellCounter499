@@ -87,10 +87,11 @@ This builds the DotDotGoose GUI annotation tool used for manual point labeling a
 
 ```bash
 venv\Scripts\activate #if using environment
-cd package
 pip install -r requirements.txt
 pip install pyinstaller
-python pyinstaller --clean --noconfirm ddg.spec #OR 'ddg_mac.spec' for MacOS
+cd package
+#OR 'ddg_mac.spec' for MacOS
+python pyinstaller --clean --noconfirm ddg.spec #OMIT 'python' if error
 ```
 
 ## Executable Directory: 
