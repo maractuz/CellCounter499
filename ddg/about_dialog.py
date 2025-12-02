@@ -27,9 +27,9 @@ import sys
 from PyQt6 import QtWidgets, QtCore, uic
 from ddg import __version__
 
-# from .ui_central_widget import Ui_central as CLASS_DIALOG
+# Fix for PyInstaller - UI files are in ddg/ subdirectory
 if getattr(sys, 'frozen', False):
-    bundle_dir = sys._MEIPASS
+    bundle_dir = os.path.join(sys._MEIPASS, 'ddg')  # ✅ Add 'ddg' subdirectory
 else:
     bundle_dir = os.path.dirname(__file__)
 CLASS_DIALOG, _ = uic.loadUiType(os.path.join(bundle_dir, 'about_dialog.ui'))

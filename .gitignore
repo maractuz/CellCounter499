@@ -1,10 +1,20 @@
 ui_*
 build/
 dist/
-package/ 
+package/build/
+package/dist/
 data/
 icons/DDG_icon
 doc/source/_build/
 .vscode/
 __pycache__/
 setup.cfg
+
+# 🔹 New: ignore virtualenv and IDE junk
+ddg-env/
+.env/
+venv/
+.env*/
+venv*/
+
+.idea/
