@@ -68,7 +68,7 @@ class MainWindow(QtWidgets.QMainWindow):
         menu.addAction(self.tr('Docs'), self.openDocs)
 
     def openDocs(self):
-        docpath = "doc\DotDotGoose.pdf"
+        docpath = "doc\CellCounter.pdf"
         if sys.platform.startswith('win'):
             os.startfile(docpath)
         elif sys.platform.startswith('darwin'):
