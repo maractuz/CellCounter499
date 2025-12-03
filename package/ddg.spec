@@ -38,6 +38,9 @@ a = Analysis(
         ("../i18n/ddg_vi.qm", "i18n/"),
         ("../i18n/ddg_zh_hans_cn.qm", "i18n/"),
 
+        # Doc
+        ("../doc/CellCounter.pdf", "doc/"),
+
         # AI model files (bundled as plain data, not analyzed)
         ("../ai_model/infer_single_overlay_improved.py", "ai_model/"),
         ("../ai_model/cell_classifier_best.pth", "ai_model/"),
