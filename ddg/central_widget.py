@@ -325,21 +325,29 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             return images
         else:
             return [self.canvas.current_image_name]
-
     def _initialize_detector(self):
         """Set up detector with model and inference script."""
         try:
+            # Try to import the wrapper
             from cell_detector_wrapper import CellDetectorWrapper
-        except ImportError:
+        except Exception as e:
+            # PRINT THE REAL ERROR to the terminal for debugging
+            print("\n" + "="*60)
+            print("DETECTOR IMPORT ERROR DETAILS:")
+            import traceback
+            traceback.print_exc()
+            print("="*60 + "\n")
+
+            # Show the specific error in the popup box so you can read it
             QtWidgets.QMessageBox.critical(
                 self,
                 self.tr('Import Error'),
-                self.tr('Cannot find cell_detector_wrapper.py'),
+                self.tr(f'Failed to load cell_detector_wrapper.\n\nSpecific Error:\n{str(e)}'),
                 QtWidgets.QMessageBox.StandardButton.Ok
             )
             return None
 
-        # Let CellDetectorWrapper handle path resolution - pass None to use defaults
+        # Let CellDetectorWrapper handle path resolution
         return CellDetectorWrapper(
             inference_script_path=None,
             model_path=None

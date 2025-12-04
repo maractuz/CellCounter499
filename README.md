@@ -1,4 +1,4 @@
-=# CellCounter Biomarker Detection Pipeline
+# CellCounter Biomarker Detection Pipeline
 
 CellCounter is a computer-vision + deep-learning pipeline for detecting microscopic biomarkers in tissue-stained microscopy images.
 It uses color-space gating, candidate generation, CNN classification, geometric postprocessing, and exports DDG-compatible `.pnt` annotation files for use inside DotDotGoose.
@@ -51,7 +51,7 @@ Given `sample.png`, the pipeline produces:
 
 ### Runtime:
 
-- Python 3.8+
+- Python 3.10+ (Required for match/case syntax)
 - NumPy
 - OpenCV
 - PyTorch
@@ -71,12 +71,15 @@ This file is bundled into the executable at build time and automatically loaded 
 
 ### 1. Clone and Environment Setup
 
+Note: Ensure you are using Python 3.10 or newer.
+
 ```bash
 git clone [https://github.com/.../CellCounter499](https://github.com/.../CellCounter499)
 cd CellCounter499
 
 # Create virtual environment
-python3 -m venv cc-env
+# On macOS, specify the version explicitly if needed (e.g., python3.11)
+python3.11 -m venv cc-env
 
 # Activate Environment
 # macOS / Linux:

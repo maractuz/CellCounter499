@@ -12,6 +12,7 @@ setup.cfg
 
 # 🔹 New: ignore virtualenv and IDE junk
 ddg-env/
+cc-env/
 .env/
 venv/
 cc-env/
