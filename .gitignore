@@ -1,0 +1,32 @@
+ui_*
+build/
+dist/
+package/build/
+package/dist/
+data/
+icons/DDG_icon
+doc/source/_build/
+.vscode/
+__pycache__/
+setup.cfg
+
+# 🔹 New: ignore virtualenv and IDE junk
+ddg-env/
+.env/
+venv/
+.env*/
+venv*/
+
+.idea/
+
+# 🔹 Mac System Files
+.DS_Store
+*.app/
+*.dmg
+
+# 🔹 Spec File Safety
+# Ignore all auto-generated spec files...
+*.spec
+# ...but FORCE track your custom ones:
+!package/ddg.spec
+!package/ddg_mac.spec
